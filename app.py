@@ -43,6 +43,19 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.get("/manifest.webmanifest")
+def manifest():
+    return send_from_directory(app.static_folder, "manifest.webmanifest")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so the worker can control the whole site
+    resp = send_from_directory(app.static_folder, "sw.js")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/login")
 def login():
     return redirect(auth_manager().get_authorize_url())
@@ -109,7 +122,10 @@ def search():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify(results=[])
-    return jsonify(results=search_tracks(q))
+    try:
+        return jsonify(results=search_tracks(q))
+    except NotImplementedError:
+        return jsonify(error="Search isn't connected yet. Paste a Spotify link instead."), 501
 
 
 if __name__ == "__main__":

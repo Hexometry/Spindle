@@ -1,31 +1,148 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0e1013">
+<meta name="theme-color" content="#14110f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon-192.png">
 <title>Spindle</title>
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<style>
+  :root { --bg:#14110f; --panel:#201b18; --line:#37302b; --text:#f1ebe4; --dim:#a39a91; --accent:#e8b04a; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:16px/1.4 system-ui, sans-serif; }
+  body { display:flex; flex-direction:column;
+    padding: env(safe-area-inset-top) 0 0; }
+  header { padding:.9rem 1rem .5rem; font-size:1.35rem; font-weight:700; letter-spacing:.02em; }
+  form { display:flex; gap:.5rem; padding:0 1rem .75rem; }
+  input { flex:1; min-width:0; padding:.7rem .85rem; font:inherit; color:var(--text);
+    background:var(--panel); border:1px solid var(--line); border-radius:.6rem; }
+  button { padding:.7rem 1rem; font:inherit; font-weight:600; color:#14110f;
+    background:var(--accent); border:0; border-radius:.6rem; }
+  button:focus-visible, input:focus-visible, li:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  #msg { padding:0 1rem; color:var(--dim); min-height:1.4em; font-size:.9rem; }
+  #results { flex:1; overflow-y:auto; margin:0; padding:.25rem 0 1rem; list-style:none; }
+  #results li { padding:.7rem 1rem; border-bottom:1px solid var(--line); }
+  #results li[aria-current="true"] { background:var(--panel); border-left:3px solid var(--accent); }
+  #results .t { font-weight:600; }
+  #results .a { color:var(--dim); font-size:.9rem; }
+  footer { background:var(--panel); border-top:1px solid var(--line);
+    padding:.6rem .75rem calc(.6rem + env(safe-area-inset-bottom)); }
+  #now { color:var(--dim); font-size:.85rem; padding:0 .25rem .4rem; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  #player { height:152px; }
+  @media (prefers-reduced-motion: no-preference) { button:active { transform:scale(.97); } }
+</style>
 </head>
 <body>
-<div id="app">
-  <main id="view" tabindex="-1"></main>
-  <div id="bar" class="bar" hidden></div>
-  <nav id="nav" class="nav" aria-label="Main"></nav>
-</div>
-<div id="sheet" class="sheet" hidden></div>
-<div id="devices" class="pop" hidden></div>
-<div id="toasts" class="toasts" aria-live="polite"></div>
-<div id="topbtns" hidden></div>
+  <header>Spindle</header>
+  <form id="f">
+    <input id="q" type="search" placeholder="Search, or paste a Spotify link" aria-label="Search or paste a Spotify link" autocomplete="off">
+    <button>Go</button>
+  </form>
+  <div id="msg" role="status"></div>
+  <ul id="results"></ul>
+  <footer>
+    <div id="now">Nothing playing</div>
+    <div id="player"></div>
+  </footer>
+
+<script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
 <script>
-  window.SPOTAPI_API_BASE = "https://spindle-gn1o.onrender.com";
+const $ = id => document.getElementById(id);
+const say = t => { $("msg").textContent = t || ""; };
+
+/* ---------- Plugin API ----------
+   Spindle.use(api => { api.on("state", s => ...); api.on("load", item => ...); })
+   api: on, loadUri, toggle, pause, seek, current()                           */
+const Spindle = (() => {
+  const handlers = { state: [], load: [] };
+  let ctrl = null, cur = null;
+  const emit = (e, d) => handlers[e].forEach(fn => { try { fn(d); } catch (err) { console.error("plugin error", err); } });
+  const api = {
+    on: (e, fn) => handlers[e] && handlers[e].push(fn),
+    loadUri(uri, item) {
+      cur = item || { name: uri, artists: "", uri };
+      ctrl.loadUri(uri);
+      ctrl.play();
+      $("now").textContent = cur.artists ? `${cur.name} — ${cur.artists}` : cur.name;
+      emit("load", cur);
+    },
+    toggle: () => ctrl && ctrl.togglePlay(),
+    pause: () => ctrl && ctrl.pause(),
+    seek: sec => ctrl && ctrl.seek(sec),
+    current: () => cur,
+  };
+  return {
+    api,
+    use: fn => fn(api),
+    _attach(c) { ctrl = c; c.addListener("playback_update", e => emit("state", e.data)); },
+  };
+})();
+
+/* ---------- Example plugin: show progress in the tab title ---------- */
+Spindle.use(api => {
+  api.on("state", s => {
+    const m = Math.floor(s.position / 60000), sec = String(Math.floor(s.position / 1000) % 60).padStart(2, "0");
+    document.title = s.isPaused ? "Spindle" : `▶ ${m}:${sec} Spindle`;
+  });
+});
+
+/* ---------- Embed player ---------- */
+let queued = null;
+window.onSpotifyIframeApiReady = IFrameAPI => {
+  IFrameAPI.createController($("player"), { width: "100%", height: 152 }, ctrl => {
+    Spindle._attach(ctrl);
+    if (queued) { Spindle.api.loadUri(queued.uri, queued); queued = null; }
+  });
+};
+function play(item) {
+  try { Spindle.api.loadUri(item.uri, item); }
+  catch { queued = item; say("Player is still loading — it will start in a moment."); }
+}
+
+/* ---------- Search / paste a link ---------- */
+function linkToUri(s) {
+  const m = s.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist|episode|show)\/([A-Za-z0-9]+)/);
+  if (m) return `spotify:${m[1]}:${m[2]}`;
+  return /^spotify:(track|album|playlist|episode|show):[A-Za-z0-9]+$/.test(s) ? s : null;
+}
+function render(items) {
+  const ul = $("results"); ul.innerHTML = "";
+  items.forEach(it => {
+    const li = document.createElement("li");
+    li.tabIndex = 0;
+    li.innerHTML = `<div class="t"></div><div class="a"></div>`;
+    li.children[0].textContent = it.name;
+    li.children[1].textContent = it.artists || "";
+    const go = () => {
+      ul.querySelectorAll("li").forEach(x => x.removeAttribute("aria-current"));
+      li.setAttribute("aria-current", "true");
+      play(it);
+    };
+    li.onclick = go;
+    li.onkeydown = e => { if (e.key === "Enter") go(); };
+    ul.appendChild(li);
+  });
+}
+$("f").onsubmit = async e => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  if (!q) return;
+  const uri = linkToUri(q);
+  if (uri) { say(""); render([{ name: uri, artists: "From link", uri }]); play({ name: uri, artists: "From link", uri }); return; }
+  say("Searching…");
+  try {
+    const r = await fetch("/search?q=" + encodeURIComponent(q));
+    const d = await r.json();
+    if (!r.ok) { say(d.error || "Search failed."); return; }
+    say(d.results.length ? "" : "No results.");
+    render(d.results);
+  } catch { say("Couldn't reach the server."); }
+};
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 </script>
-<script src="app.js"></script>
 </body>
 </html>
