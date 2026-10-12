@@ -115,7 +115,8 @@ async function api(path, { method = 'GET', body, query, retry = true } = {}) {
   const txt = await r.text();
   let j = null; try { j = txt ? JSON.parse(txt) : null; } catch { /* not json */ }
   if (!r.ok) {
-    const e = new Error((j && j.error && (j.error.message || j.error)) || ('HTTP ' + r.status));
+    const e = new Error((j && j.error && (j.error.message || j.error)) || (txt && txt.length < 300 ? txt.trim() : '') || ('HTTP ' + r.status));
+    e.url = url.pathname;
     e.status = r.status; e.reason = j && j.error && j.error.reason; throw e;
   }
   return j;
@@ -262,7 +263,7 @@ function playRow(t, onclick, idx) {
   return h('button', { class: 'row' + (cur ? ' now' : ''), onclick },
     img((t.album || {}).images), h('div', { class: 'meta' }, h('div', { class: 't1' }, t.name), h('div', { class: 't2' }, artists(t))), h('span', { class: 'dur' }, fmt(t.duration_ms)));
 }
-const errBox = e => h('p', { class: 'err' }, e.message + (e.status === 403 ? ' (Spotify may restrict this endpoint for apps in development mode.)' : ''));
+const errBox = e => h('p', { class: 'err' }, `${e.message} [${e.status || ''} ${e.url || ''}]` + (e.status === 403 ? ' (Spotify refused this request. Check that your account is under User Management and that the app owner has Premium.)' : ''));
 
 function signInView() {
   const has = !!LS.get('clientId');
