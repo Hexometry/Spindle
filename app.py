@@ -58,6 +58,8 @@ def service_worker():
 
 @app.get("/login")
 def login():
+    if not os.environ.get("SPOTIFY_CLIENT_ID"):
+        return "Spotify login isn't configured.", 503
     return redirect(auth_manager().get_authorize_url())
 
 
@@ -105,16 +107,55 @@ def play():
     return "", 204
 
 
-# ---------- search (stays on SpotAPI) ----------
+# ---------- search by name ----------
+# Two backends, tried in order. Both return [{"name","artists","uri"}].
+#  - spotipy: official API, app-level login (no user login needed). Needs
+#             SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET.
+#  - spotapi: unofficial web-player endpoints. No keys, but it breaks
+#             sometimes and may be blocked from datacenter IPs like Render's.
+# Set SEARCH_BACKEND=spotapi to try SpotAPI first.
+
+def _search_spotipy(query):
+    from spotipy.oauth2 import SpotifyClientCredentials
+    cid, secret = os.environ.get("SPOTIFY_CLIENT_ID"), os.environ.get("SPOTIFY_CLIENT_SECRET")
+    if not (cid and secret):
+        raise RuntimeError("Spotify client credentials not set")
+    sp = Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=secret))
+    items = sp.search(q=query, type="track", limit=10)["tracks"]["items"]
+    return [
+        {"name": t["name"], "artists": ", ".join(a["name"] for a in t["artists"]), "uri": t["uri"]}
+        for t in items
+    ]
+
+
+def _search_spotapi(query):
+    from spotapi import Song
+    raw = Song().query_songs(query, limit=10)
+    out = []
+    for entry in raw["data"]["searchV2"]["tracksV2"]["items"]:
+        d = (entry.get("item") or entry).get("data") or {}
+        uri = d.get("uri")
+        if not uri:
+            continue
+        artists = ", ".join(
+            (a.get("profile") or {}).get("name", "")
+            for a in (d.get("artists") or {}).get("items", [])
+        )
+        out.append({"name": d.get("name", "Unknown"), "artists": artists, "uri": uri})
+    return out
+
 
 def search_tracks(query: str) -> list[dict]:
-    """
-    PUT YOUR EXISTING SpotAPI SEARCH CALL HERE.
-    Return a list of dicts that include at least a Spotify URI, e.g.
-      [{"name": "...", "artists": "...", "uri": "spotify:track:..."}]
-    The frontend passes "uri" straight to /play.
-    """
-    raise NotImplementedError("Hook up SpotAPI search here")
+    order = [_search_spotapi, _search_spotipy] if os.environ.get("SEARCH_BACKEND") == "spotapi" \
+        else [_search_spotipy, _search_spotapi]
+    last = None
+    for fn in order:
+        try:
+            return fn(query)
+        except Exception as e:  # try the next backend
+            app.logger.warning("%s failed: %r", fn.__name__, e)
+            last = e
+    raise RuntimeError(f"All search backends failed: {last!r}")
 
 
 @app.get("/search")
@@ -124,8 +165,8 @@ def search():
         return jsonify(results=[])
     try:
         return jsonify(results=search_tracks(q))
-    except NotImplementedError:
-        return jsonify(error="Search isn't connected yet. Paste a Spotify link instead."), 501
+    except Exception:
+        return jsonify(error="Search is unavailable right now. Check the server logs."), 502
 
 
 if __name__ == "__main__":
