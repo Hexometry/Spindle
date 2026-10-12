@@ -1,1 +1,1 @@
-window.SPOTAPI_API_BASE = "https://spindle-api-gn1o.onrender.com";
+window.SPOTAPI_API_BASE = "https://spindle-gn1o.onrender.com";
