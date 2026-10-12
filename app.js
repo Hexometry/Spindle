@@ -68,7 +68,7 @@ async function login() {
   LS.set('verifier', verifier); LS.set('state', state);
   location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
     client_id: id, response_type: 'code', redirect_uri: redirectUri, code_challenge_method: 'S256',
-    code_challenge: challenge, scope: SCOPES, state, show_dialog: 'true',
+    code_challenge: challenge, scope: SCOPES, state,
   });
 }
 async function tokenReq(body) {
@@ -115,8 +115,7 @@ async function api(path, { method = 'GET', body, query, retry = true } = {}) {
   const txt = await r.text();
   let j = null; try { j = txt ? JSON.parse(txt) : null; } catch { /* not json */ }
   if (!r.ok) {
-    const e = new Error((j && j.error && (j.error.message || j.error)) || (txt && txt.length < 300 ? txt.trim() : '') || ('HTTP ' + r.status));
-    e.url = url.pathname;
+    const e = new Error((j && j.error && (j.error.message || j.error)) || ('HTTP ' + r.status));
     e.status = r.status; e.reason = j && j.error && j.error.reason; throw e;
   }
   return j;
@@ -263,7 +262,7 @@ function playRow(t, onclick, idx) {
   return h('button', { class: 'row' + (cur ? ' now' : ''), onclick },
     img((t.album || {}).images), h('div', { class: 'meta' }, h('div', { class: 't1' }, t.name), h('div', { class: 't2' }, artists(t))), h('span', { class: 'dur' }, fmt(t.duration_ms)));
 }
-const errBox = e => h('p', { class: 'err' }, `${e.message} [${e.status || ''} ${e.url || ''}]` + (e.status === 403 ? ' (Spotify refused this request. Check that your account is under User Management and that the app owner has Premium.)' : ''));
+const errBox = e => h('p', { class: 'err' }, e.message + (e.status === 403 ? ' (Spotify may restrict this endpoint for apps in development mode.)' : ''));
 
 function signInView() {
   const has = !!LS.get('clientId');
@@ -328,7 +327,11 @@ function searchView() {
     const q = input.value.trim(); LS.set('lastq', q);
     if (!q) { out.replaceChildren(); return; }
     try {
-      const j = await api('/search', { query: { q, type: 'track,album,playlist', limit: 10 } });
+      // Catalog search is served by the SpotAPI-backed local service. Playback remains
+      // on Spotify's supported Web API because SpotAPI is a Python library, not a browser SDK.
+      const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+      if (!r.ok) throw new Error('SpotAPI search failed (' + r.status + '). Is the Spindle backend running?');
+      const j = await r.json();
       const sec = (title, arr, row) => arr && arr.items && arr.items.filter(Boolean).length ? [h('h2', { style: 'margin-top:.8rem' }, title), arr.items.filter(Boolean).map(row)] : [];
       const tr = (j.tracks || {}).items ? j.tracks.items.filter(Boolean) : [];
       out.replaceChildren(

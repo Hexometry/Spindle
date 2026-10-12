@@ -24,3 +24,26 @@ A Spotify web client (installable PWA) with a Marketplace for Spicetify-style ex
 - **Themes:** only `color.ini` schemes are applied. Spicetify theme CSS targets the desktop app's markup and is not used.
 - Extensions can still use the network and see what you play, so install only code you trust.
 - Ad-blocking extensions are not supported (and are unnecessary with Premium).
+
+
+## SpotAPI integration (backend required)
+
+Spindle is a browser-based PWA, while SpotAPI is a Python library. The SpotAPI-powered
+catalog search therefore runs in a small same-origin Python backend. The search UI now
+uses `/api/search`; run Spindle through this backend rather than opening `index.html`
+directly or deploying it as a static-only GitHub Pages site.
+
+### Run locally
+
+1. Install Python 3.10+.
+2. From this folder, run `python -m pip install -r requirements.txt`.
+3. Run `python -m uvicorn server:app --host 127.0.0.1 --port 8000`.
+4. Open `http://127.0.0.1:8000`.
+
+The adapter currently replaces **catalog track search** with SpotAPI. Spotify OAuth,
+playback/device controls, user playlists and liked songs still use Spindle's existing
+official Spotify Web API integration; those features need a separate server-side
+SpotAPI mapping and authentication/session design before they can be safely migrated.
+SpotAPI uses unofficial/private Spotify endpoints in parts, which may change or be
+restricted. Do not expose an authenticated backend publicly without adding appropriate
+session isolation, CSRF protections, rate limiting, and secret management.
