@@ -3,13 +3,12 @@ services:
     name: spindle
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    # One worker only: the SpotAPI player session lives in memory.
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120
     envVars:
       - key: FLASK_SECRET_KEY
         generateValue: true
-      - key: SPOTIFY_CLIENT_ID
+      - key: SPINDLE_PLAYBACK_KEY
         sync: false
-      - key: SPOTIFY_CLIENT_SECRET
-        sync: false
-      - key: SPOTIFY_REDIRECT_URI
+      - key: SPOTAPI_COOKIE_DUMP
         sync: false

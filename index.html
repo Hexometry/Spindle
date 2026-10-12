@@ -200,8 +200,9 @@ function trySdk(ms) {
 }
 
 async function refreshDevices() {
-  const r = await fetch("/devices"); if (!r.ok) return;
-  const list = (await r.json()).devices, sel = $("dev");
+  const r = await fetch("/devices"); if (!r.ok) { if (r.status === 401) say("Session expired. Log in again."); return; }
+  const j = await r.json(), list = j.devices, sel = $("dev");
+  if (j.hint) say(j.hint);
   sel.innerHTML = "";
   list.forEach(d => { const o = document.createElement("option"); o.value = d.id; o.textContent = d.name + (d.is_active ? " (active)" : ""); o.selected = d.is_active; sel.appendChild(o); });
   if (!list.length) { sel.innerHTML = "<option value=''>No devices — open the Spotify app</option>"; C.deviceId = null; }
@@ -224,13 +225,12 @@ async function startRemote() {
 /* ===== Account + boot ===== */
 async function boot() {
   let me = { logged_in: false };
-  // attach the click handler immediately, before any network call
+  // Attach the tap handler first so the button works even while /me is still loading.
   $("acct").onclick = () => { location.href = me.logged_in ? "/logout" : "/login"; };
   try { me = await (await fetch("/me")).json(); } catch {}
-  $("acct").textContent = me.logged_in ? `${me.name} · Log out` : "Log in";
-  if (!me.logged_in) return startEmbed("Embedded player — log in with Spotify Premium for full songs");
-  if (me.product === "premium") { if (!(await trySdk(6000))) await startRemote(); return; }
-  return startEmbed("Free account — full songs need Premium, or being logged in to Spotify in this browser");
+  $("acct").textContent = me.logged_in ? "Log out" : "Log in";
+  if (!me.logged_in) return startEmbed("Embedded player — log in to control your Spotify app");
+  return startRemote();
 }
 
 /* ===== Controls ===== */
