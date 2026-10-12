@@ -22,6 +22,13 @@ SCOPES = " ".join([
 ])
 
 
+REQUIRED_SPOTIFY_VARS = ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI")
+
+
+def missing_spotify_vars():
+    return [v for v in REQUIRED_SPOTIFY_VARS if not os.environ.get(v)]
+
+
 def auth_manager():
     # Tokens live in the Flask session cookie, so each visitor has their own login.
     return SpotifyOAuth(
@@ -36,7 +43,7 @@ def auth_manager():
 
 def valid_token():
     """Return a valid access token (auto-refreshed by Spotipy) or None."""
-    if not os.environ.get("SPOTIFY_CLIENT_ID"):
+    if missing_spotify_vars():
         return None
     am = auth_manager()
     info = am.validate_token(am.cache_handler.get_cached_token())
@@ -70,8 +77,9 @@ def public_file(name):
 
 @app.get("/login")
 def login():
-    if not os.environ.get("SPOTIFY_CLIENT_ID"):
-        return "Spotify login isn't configured.", 503
+    missing = missing_spotify_vars()
+    if missing:
+        return "Spotify login isn't set up yet. Missing environment variable(s) on the server: " + ", ".join(missing), 503
     return redirect(auth_manager().get_authorize_url())
 
 
