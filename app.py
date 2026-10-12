@@ -1,11 +1,12 @@
 import os
 
-from flask import Flask, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory, session
 from spotipy import Spotify, SpotifyException
 from spotipy.cache_handler import FlaskSessionCacheHandler
 from spotipy.oauth2 import SpotifyOAuth
 
-app = Flask(__name__, static_folder="static")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, static_folder=None)  # no folders: files sit next to app.py
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
 SCOPES = " ".join([
@@ -31,6 +32,8 @@ def auth_manager():
 
 def valid_token():
     """Return a valid access token (auto-refreshed by Spotipy) or None."""
+    if not os.environ.get("SPOTIFY_CLIENT_ID"):
+        return None
     am = auth_manager()
     info = am.validate_token(am.cache_handler.get_cached_token())
     return info["access_token"] if info else None
@@ -38,22 +41,27 @@ def valid_token():
 
 # ---------- pages & auth (Spotipy) ----------
 
+# Only these files are served (so app.py etc. can never be downloaded)
+PUBLIC_FILES = {"index.html", "manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png"}
+
+
+def _file(name):
+    resp = send_from_directory(BASE_DIR, name)
+    if name == "sw.js":
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    return _file("index.html")
 
 
-@app.get("/manifest.webmanifest")
-def manifest():
-    return send_from_directory(app.static_folder, "manifest.webmanifest")
-
-
-@app.get("/sw.js")
-def service_worker():
-    # Served from the root so the worker can control the whole site
-    resp = send_from_directory(app.static_folder, "sw.js")
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp
+@app.get("/<path:name>")
+def public_file(name):
+    if name not in PUBLIC_FILES:
+        abort(404)
+    return _file(name)
 
 
 @app.get("/login")

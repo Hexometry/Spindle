@@ -1,7 +1,7 @@
 // Minimal service worker: makes the app installable and caches the shell.
 const CACHE = "spindle-v1";
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(["/", "/static/icon-192.png"])));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(["/", "/icon-192.png"])));
   self.skipWaiting();
 });
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
