@@ -2,3 +2,14 @@ fastapi>=0.110,<1
 uvicorn[standard]>=0.27,<1
 spotapi>=1.2.7,<2
 pymongo>=4.6,<5
+requests
+colorama
+Pillow
+readerwriterlock
+curl_cffi
+typing_extensions
+validators
+pyotp
+beautifulsoup4
+redis
+websockets
