@@ -25,16 +25,21 @@ SCOPES = " ".join([
 REQUIRED_SPOTIFY_VARS = ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI")
 
 
+def env(name):
+    # Strip stray spaces/newlines that often sneak in when pasting values
+    return os.environ.get(name, "").strip()
+
+
 def missing_spotify_vars():
-    return [v for v in REQUIRED_SPOTIFY_VARS if not os.environ.get(v)]
+    return [v for v in REQUIRED_SPOTIFY_VARS if not env(v)]
 
 
 def auth_manager():
     # Tokens live in the Flask session cookie, so each visitor has their own login.
     return SpotifyOAuth(
-        client_id=os.environ["SPOTIFY_CLIENT_ID"],
-        client_secret=os.environ["SPOTIFY_CLIENT_SECRET"],
-        redirect_uri=os.environ["SPOTIFY_REDIRECT_URI"],  # e.g. https://spindle.onrender.com/callback
+        client_id=env("SPOTIFY_CLIENT_ID"),
+        client_secret=env("SPOTIFY_CLIENT_SECRET"),
+        redirect_uri=env("SPOTIFY_REDIRECT_URI"),  # e.g. https://spindle.onrender.com/callback
         scope=SCOPES,
         cache_handler=FlaskSessionCacheHandler(session),
         show_dialog=False,
@@ -81,6 +86,25 @@ def login():
     if missing:
         return "Spotify login isn't set up yet. Missing environment variable(s) on the server: " + ", ".join(missing), 503
     return redirect(auth_manager().get_authorize_url())
+
+
+@app.get("/login-check")
+def login_check():
+    """Shows exactly what redirect URI the server sends to Spotify (no secrets)."""
+    raw = os.environ.get("SPOTIFY_REDIRECT_URI", "")
+    cid = env("SPOTIFY_CLIENT_ID")
+    return (
+        "Redirect URI the server sends to Spotify:\n"
+        f"  {env('SPOTIFY_REDIRECT_URI')!r}\n"
+        f"Raw value had hidden whitespace: {raw != raw.strip()}\n"
+        f"Starts with https://: {raw.strip().startswith('https://')}\n"
+        f"Ends with /callback: {raw.strip().endswith('/callback')}\n"
+        f"Client ID starts with: {cid[:4]}... (length {len(cid)}, should be 32)\n"
+        "\nThe redirect URI above must appear, character for character, in your Spotify\n"
+        "app's Redirect URIs, and the client ID must belong to that same app.",
+        200,
+        {"Content-Type": "text/plain; charset=utf-8"},
+    )
 
 
 @app.get("/callback")
