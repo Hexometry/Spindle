@@ -334,7 +334,7 @@ function searchView() {
       const r = await fetch(apiBase + '/api/search?q=' + encodeURIComponent(q));
       if (!r.ok) throw new Error('SpotAPI search failed (' + r.status + '). Check that the backend is deployed and healthy.');
       const j = await r.json();
-      const sec = (title, arr, row) => arr && arr.items && arr.items.filter(Boolean).length ? [h('h2', { style: 'margin-top:.8rem' }, title), arr.items.filter(Boolean).map(row)] : [];
+      const sec = (title, arr, row) => arr && arr.items && arr.items.filter(Boolean).length ? [h('h2', { style: 'margin-top:.8rem' }, title), ...arr.items.filter(Boolean).map(row)] : [];
       const tr = (j.tracks || {}).items ? j.tracks.items.filter(Boolean) : [];
       out.replaceChildren(
         ...sec('Songs', j.tracks, t => playRow(t, () => Cmd.play({ uris: tr.map(x => x.uri).slice(tr.indexOf(t)) }))),
