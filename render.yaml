@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: spindle-spotapi
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    envVars:
+      - key: SPINDLE_ALLOWED_ORIGINS
+        value: https://hexometry.github.io

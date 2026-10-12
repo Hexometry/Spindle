@@ -1,4 +1,5 @@
-/* Spindle: Spotify web client powered by a local SpotAPI Python backend.
+/* Spindle: a Spotify web client with a Spicetify-style Marketplace.
+   Playback uses the official Web API (Spotify Connect remote control) and optionally the Web Playback SDK.
    Extensions run in sandboxed iframes and talk to the page through a small Spicetify shim. */
 'use strict';
 
@@ -53,43 +54,70 @@ const img = (images, cls = 'cover') => h('img', { class: cls, src: (images && (i
 const artists = t => (t.artists || []).map(a => a.name).join(', ');
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-/* ---------- SpotAPI backend session ---------- */
-async function login() {
-  try {
-    const r = await fetch('/api/status');
-    const j = await r.json();
-    if (!r.ok || !j.authenticated) throw new Error(j.message || 'Configure the SpotAPI session in the backend first.');
-    LS.set('tok', { spotapi: true, exp: Number.MAX_SAFE_INTEGER });
-    toast('SpotAPI session connected.'); route();
-  } catch (e) { toast(e.message || 'Could not connect to SpotAPI backend.', true); }
-}
-async function token() { return LS.get('tok') ? 'spotapi-session' : null; }
-function logout() { LS.del('tok'); location.hash = '#/home'; route(); }
+/* ---------- auth (PKCE, no server) ---------- */
+const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative user-library-read streaming user-read-email user-read-private';
+const redirectUri = location.origin + location.pathname;
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-async function api(path, { method = 'GET', body, query } = {}) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(query || {})) if (v != null) q.set(k, v);
-  let url, opts = { method, headers: {} };
-  if (path === '/search') url = '/api/search' + (q.size ? '?' + q : '');
-  else if (path === '/me/player/devices') url = '/api/me/player/devices';
-  else if (path === '/me/playlists') url = '/api/me/playlists' + (q.size ? '?' + q : '');
-  else if (path === '/me/tracks') url = '/api/me/tracks' + (q.size ? '?' + q : '');
-  else if (/^\/playlists\/[^/]+\/(items|tracks)$/.test(path)) url = '/api' + path + (q.size ? '?' + q : '');
-  else if (path === '/me/player') {
-    if (method === 'GET') url = '/api/player/state';
-    else { url = '/api/player/command'; opts.method = 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify({ op: 'transfer', body: body || {}, query: query || {} }); }
-  } else if (path.startsWith('/me/player/')) {
-    const op = ({ play: 'play', pause: 'pause', next: 'next', previous: 'previous', seek: 'seek', volume: 'volume', shuffle: 'shuffle', repeat: 'repeat', queue: 'queue' })[path.split('/').pop()];
-    if (!op) throw new Error('This API operation is not supported by the SpotAPI adapter.');
-    url = '/api/player/command'; opts.method = 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify({ op, body: body || {}, query: query || {} });
-  } else if (path.startsWith('http') || path.startsWith('/v1/')) {
-    throw new Error('This extension API operation is not supported by the SpotAPI adapter: ' + path);
-  } else throw new Error('Unsupported SpotAPI operation: ' + path);
-  if (opts.method === 'GET' && q.size && !url.includes('?')) url += '?' + q;
-  const r = await fetch(url, opts);
+async function login() {
+  const id = LS.get('clientId');
+  if (!id) { location.hash = '#/settings'; toast('Add your Spotify Client ID first.', true); return; }
+  const verifier = b64(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const state = b64(crypto.getRandomValues(new Uint8Array(12)));
+  LS.set('verifier', verifier); LS.set('state', state);
+  location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    client_id: id, response_type: 'code', redirect_uri: redirectUri, code_challenge_method: 'S256',
+    code_challenge: challenge, scope: SCOPES, state,
+  });
+}
+async function tokenReq(body) {
+  const r = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: LS.get('clientId'), ...body }),
+  });
+  if (!r.ok) throw new Error('Spotify login failed (' + r.status + '). Check the Client ID and redirect URI.');
+  const j = await r.json();
+  LS.set('tok', { access: j.access_token, refresh: j.refresh_token || (LS.get('tok') || {}).refresh, exp: Date.now() + j.expires_in * 1000 - 30000 });
+}
+async function handleCallback() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('code') && !p.has('error')) return;
+  const code = p.get('code'), state = p.get('state');
+  history.replaceState({}, '', location.pathname + location.hash);
+  if (p.get('error')) throw new Error('Spotify said: ' + p.get('error'));
+  if (state !== LS.get('state')) throw new Error('Login state did not match. Try signing in again.');
+  await tokenReq({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: LS.get('verifier') });
+}
+async function token() {
+  const t = LS.get('tok');
+  if (!t) return null;
+  if (Date.now() < t.exp) return t.access;
+  await tokenReq({ grant_type: 'refresh_token', refresh_token: t.refresh });
+  return LS.get('tok').access;
+}
+function logout() { LS.del('tok'); location.hash = '#/home'; location.reload(); }
+
+async function api(path, { method = 'GET', body, query, retry = true } = {}) {
+  const tok = await token();
+  if (!tok) throw new Error('Not signed in');
+  const url = new URL(path.startsWith('http') ? path : 'https://api.spotify.com/v1' + path);
+  for (const [k, v] of Object.entries(query || {})) if (v != null) url.searchParams.set(k, v);
+  const r = await fetch(url, {
+    method, headers: { Authorization: 'Bearer ' + tok, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 429 && retry) {
+    await new Promise(res => setTimeout(res, (+r.headers.get('Retry-After') || 1) * 1000));
+    return api(path, { method, body, query, retry: false });
+  }
   if (r.status === 204 || r.status === 202) return null;
-  let j = null; try { j = await r.json(); } catch { /* non-JSON response */ }
-  if (!r.ok) { const e = new Error((j && (j.detail || j.message)) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
+  const txt = await r.text();
+  let j = null; try { j = txt ? JSON.parse(txt) : null; } catch { /* not json */ }
+  if (!r.ok) {
+    const e = new Error((j && j.error && (j.error.message || j.error)) || ('HTTP ' + r.status));
+    e.status = r.status; e.reason = j && j.error && j.error.reason; throw e;
+  }
   return j;
 }
 
@@ -137,6 +165,21 @@ const Cmd = {
   queue: uri => act(() => api('/me/player/queue', { method: 'POST', query: { uri } })),
   transfer: id => act(() => api('/me/player', { method: 'PUT', body: { device_ids: [id], play: true } })),
 };
+
+/* ---------- Web Playback SDK (optional, desktop browsers) ---------- */
+function enableSdk() {
+  if (P.sdk || document.getElementById('sdk')) return;
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    const p = new Spotify.Player({ name: 'Spindle (this browser)', getOAuthToken: async cb => cb(await token()), volume: 0.8 });
+    p.addListener('ready', ({ device_id }) => { P.sdkId = device_id; toast('This browser is now a Spotify device.'); });
+    p.addListener('initialization_error', e => toast(e.message, true));
+    p.addListener('authentication_error', e => toast(e.message, true));
+    p.addListener('account_error', () => toast('Browser playback needs Spotify Premium.', true));
+    p.addListener('player_state_changed', () => setTimeout(poll, 200));
+    p.connect(); P.sdk = p;
+  };
+  document.head.append(h('script', { id: 'sdk', src: 'https://sdk.scdn.co/spotify-player.js' }));
+}
 
 /* ---------- now-playing bar, sheet, devices ---------- */
 function renderBar() {
@@ -222,11 +265,12 @@ function playRow(t, onclick, idx) {
 const errBox = e => h('p', { class: 'err' }, e.message + (e.status === 403 ? ' (Spotify may restrict this endpoint for apps in development mode.)' : ''));
 
 function signInView() {
+  const has = !!LS.get('clientId');
   view.replaceChildren(h('div', { class: 'hero' },
     h('h1', {}, 'Spindle'),
-    h('p', { class: 'muted' }, 'Spindle now connects through the SpotAPI backend. Configure your own Spotify cookie session on the server, then connect here.'),
-    h('button', { class: 'btn', onclick: login }, 'Connect to SpotAPI'),
-    h('p', { class: 'small muted' }, 'The backend must be running and SPOTIFY_COOKIE_DUMP must be configured. Do not expose the backend publicly without authentication and HTTPS.')));
+    h('p', { class: 'muted' }, 'Your Spotify library, with a Marketplace for Spicetify-style extensions and color schemes. Playback controls the Spotify app on your phone through Spotify Connect.'),
+    has ? h('button', { class: 'btn', onclick: login }, 'Sign in with Spotify') : h('a', { class: 'btn', href: '#/settings', style: 'text-decoration:none;display:inline-block' }, 'Set up Spotify access'),
+    h('p', { class: 'small muted' }, 'You need a free developer app at developer.spotify.com and Spotify Premium for playback control. Setup takes a few minutes.')));
 }
 
 async function homeView() {
@@ -283,9 +327,12 @@ function searchView() {
     const q = input.value.trim(); LS.set('lastq', q);
     if (!q) { out.replaceChildren(); return; }
     try {
-      // Catalog search is served by the SpotAPI-backed local service.
-      const r = await fetch('/api/search?q=' + encodeURIComponent(q));
-      if (!r.ok) throw new Error('SpotAPI search failed (' + r.status + '). Is the Spindle backend running?');
+      // Catalog search is served by the SpotAPI-backed local service. Playback remains
+      // on Spotify's supported Web API because SpotAPI is a Python library, not a browser SDK.
+      const apiBase = String(window.SPOTAPI_API_BASE || '').replace(/\/$/, '');
+      if (!apiBase) throw new Error('SpotAPI backend is not configured. Set SPOTAPI_API_BASE in config.js and deploy the Python backend; GitHub Pages cannot run Python itself.');
+      const r = await fetch(apiBase + '/api/search?q=' + encodeURIComponent(q));
+      if (!r.ok) throw new Error('SpotAPI search failed (' + r.status + '). Check that the backend is deployed and healthy.');
       const j = await r.json();
       const sec = (title, arr, row) => arr && arr.items && arr.items.filter(Boolean).length ? [h('h2', { style: 'margin-top:.8rem' }, title), arr.items.filter(Boolean).map(row)] : [];
       const tr = (j.tracks || {}).items ? j.tracks.items.filter(Boolean) : [];
@@ -465,14 +512,25 @@ function installedView(tabs) {
 
 /* ---------- settings ---------- */
 function settingsView() {
-  const copy = h('button', { class: 'btn ghost', onclick: () => navigator.clipboard.writeText(location.origin + location.pathname).then(() => toast('Copied'), () => toast('Copy failed.', true)) }, 'Copy app URL');
+  const id = h('input', { type: 'text', id: 'cid', value: LS.get('clientId', ''), placeholder: '32-character Client ID', autocomplete: 'off', 'aria-label': 'Spotify Client ID' });
+  const save = h('button', { class: 'btn' }, 'Save');
+  save.onclick = () => { LS.set('clientId', id.value.trim()); toast('Saved'); };
+  const copy = h('button', { class: 'btn ghost' }, 'Copy');
+  copy.onclick = () => navigator.clipboard.writeText(redirectUri).then(() => toast('Copied'), () => toast('Select the address and copy it.', true));
+  const sdk = h('input', { type: 'checkbox', id: 'sdk', checked: !!LS.get('sdk') });
+  sdk.addEventListener('change', () => { LS.set('sdk', sdk.checked); if (sdk.checked && LS.get('tok')) enableSdk(); else toast('Takes effect after reload.'); });
   view.replaceChildren(h('h1', {}, 'Settings'),
-    h('div', { class: 'card' }, h('h2', {}, 'SpotAPI connection'),
-      h('p', { class: 'small muted' }, 'Spotify API access is provided by the Python SpotAPI backend. No Spotify Developer Client ID or OAuth redirect URI is used by Spindle.'),
-      h('p', { class: 'small muted' }, 'Set SPOTIFY_COOKIE_DUMP on the server to a valid SpotAPI cookie dump, restart the backend, then use Connect to SpotAPI.'),
-      h('div', { class: 'acts' }, copy, h('button', { class: 'btn', onclick: login }, 'Test connection'), LS.get('tok') ? h('button', { class: 'btn ghost', onclick: logout }, 'Disconnect') : null)),
+    h('div', { class: 'card' }, h('h2', {}, 'Spotify access'),
+      h('ol', { class: 'small', style: 'margin:0;padding-left:1.2rem;display:grid;gap:.3rem' },
+        h('li', {}, 'Create an app at developer.spotify.com/dashboard.'),
+        h('li', {}, 'Add this Redirect URI to the app:'),
+        h('li', {}, 'Paste its Client ID below and save, then sign in.')),
+      h('div', { class: 'acts' }, h('code', {}, redirectUri), copy),
+      h('div', { class: 'field' }, h('label', { for: 'cid' }, 'Client ID'), id), h('div', { class: 'acts' }, save,
+        LS.get('tok') ? h('button', { class: 'btn ghost', onclick: logout }, 'Sign out') : h('button', { class: 'btn ghost', onclick: login }, 'Sign in'))),
     h('div', { class: 'card' }, h('h2', {}, 'Playback'),
-      h('p', { class: 'small muted' }, 'Playback commands use SpotAPI Player. Available devices and some controls depend on the installed SpotAPI version and Spotify session.'),
+      h('div', { class: 'small muted' }, 'By default this app remote-controls the Spotify app on your phone or any other device on your account. Use the device button in the player to switch.'),
+      h('label', { class: 'acts small', for: 'sdk' }, sdk, 'Also make this browser a playback device (desktop browsers, Premium)'),
       h('button', { class: 'btn ghost', onclick: openDevices }, 'Choose device')));
 }
 
@@ -569,13 +627,10 @@ const Ext = {
       case 'api': {
         let [method, url, body] = a; url = String(url);
         if (url.startsWith('sp://') || url.startsWith('hm://')) throw new Error('Spotify desktop endpoints are not available here');
+        if (url.startsWith('/')) url = 'https://api.spotify.com' + (url.startsWith('/v1/') ? '' : '/v1') + url;
+        if (!/^https:\/\/api\.spotify\.com\/v1\//.test(url)) throw new Error('Only api.spotify.com/v1 is allowed');
         if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) throw new Error('Bad method');
-        let parsed;
-        try { parsed = new URL(url, location.origin); } catch { throw new Error('Invalid extension API URL'); }
-        if (parsed.origin !== location.origin && parsed.hostname !== 'api.spotify.com') throw new Error('Only SpotAPI-backed Spotify operations are allowed');
-        let path = parsed.pathname.replace(/^\/v1(?=\/)/, '');
-        const query = Object.fromEntries(parsed.searchParams.entries());
-        return api(path, { method, body: method === 'GET' ? undefined : body, query: method === 'GET' ? { ...query, ...(body && typeof body === 'object' ? body : {}) } : query });
+        return api(url, { method, body: method === 'GET' ? undefined : body, query: method === 'GET' && body && typeof body === 'object' ? body : undefined });
       }
       default: throw new Error('Unknown call ' + m);
     }
@@ -600,8 +655,8 @@ function route() {
   view.scrollTo(0, 0);
   if (name === 'market') return marketView();
   if (name === 'settings') return settingsView();
-  if (name === 'search') return searchView();
   if (!LS.get('tok')) return signInView();
+  if (name === 'search') return searchView();
   if (name === 'playlist') return playlistView(arg);
   return homeView();
 }
@@ -616,9 +671,8 @@ onState(() => {
   applyTheme(LS.get('theme'));
   try { if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {}); } catch { /* no SW */ }
   try { await handleCallback(); } catch (e) { toast(e.message, true); }
-  try { const sr = await fetch('/api/status'); const sj = await sr.json(); if (sj.authenticated) LS.set('tok', { spotapi: true, exp: Number.MAX_SAFE_INTEGER }); else LS.del('tok'); } catch { /* backend may not be available yet */ }
   renderBar(); route();
-  if (LS.get('tok')) { await poll(); setInterval(poll, 3000); setInterval(tickProgress, 500); }
+  if (LS.get('tok')) { if (LS.get('sdk')) enableSdk(); await poll(); setInterval(poll, 3000); setInterval(tickProgress, 500); }
   installedExts().filter(e => e.enabled).forEach(e => Ext.start(e, LS.get('code.' + e.id, '')));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
   if ('mediaSession' in navigator) {
