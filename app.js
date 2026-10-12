@@ -68,7 +68,7 @@ async function login() {
   LS.set('verifier', verifier); LS.set('state', state);
   location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
     client_id: id, response_type: 'code', redirect_uri: redirectUri, code_challenge_method: 'S256',
-    code_challenge: challenge, scope: SCOPES, state,
+    code_challenge: challenge, scope: SCOPES, state, show_dialog: 'true',
   });
 }
 async function tokenReq(body) {
