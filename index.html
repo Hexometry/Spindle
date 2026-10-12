@@ -224,9 +224,10 @@ async function startRemote() {
 /* ===== Account + boot ===== */
 async function boot() {
   let me = { logged_in: false };
+  // attach the click handler immediately, before any network call
+  $("acct").onclick = () => { location.href = me.logged_in ? "/logout" : "/login"; };
   try { me = await (await fetch("/me")).json(); } catch {}
   $("acct").textContent = me.logged_in ? `${me.name} · Log out` : "Log in";
-  $("acct").onclick = () => { location.href = me.logged_in ? "/logout" : "/login"; };
   if (!me.logged_in) return startEmbed("Embedded player — log in with Spotify Premium for full songs");
   if (me.product === "premium") { if (!(await trySdk(6000))) await startRemote(); return; }
   return startEmbed("Free account — full songs need Premium, or being logged in to Spotify in this browser");
