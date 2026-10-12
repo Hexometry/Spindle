@@ -1,49 +1,50 @@
-# Spindle
+# Spindle — SpotAPI edition
 
-A Spotify web client (installable PWA) with a Marketplace for Spicetify-style extensions and color schemes.
+Spindle is a browser-based Spotify client/PWA with a Marketplace for Spicetify-style extensions and themes. Spotify catalog and account operations are routed through a local Python backend using [SpotAPI](https://github.com/Aran404/SpotAPI). The Spotify Developer Web API OAuth flow and Web Playback SDK are no longer used.
 
-## Setup (about 5 minutes)
+## Requirements
 
-1. **Host the folder over HTTPS.** Spotify requires an https redirect URI.
-   Easiest: create a GitHub repo, upload these files, and turn on Settings > Pages (deploy from `main`, root).
-   Your URL will look like `https://YOURNAME.github.io/REPO/`. Netlify Drop or Cloudflare Pages also work.
-2. **Create a Spotify app** at https://developer.spotify.com/dashboard.
-   Add the redirect URI shown in Spindle's Settings page (it is the exact address of the page, e.g. `https://YOURNAME.github.io/REPO/`).
-   Select "Web API" (and "Web Playback SDK" if you want browser playback).
-3. Open the hosted page on your phone, go to **Settings**, paste the **Client ID**, save, then **Sign in**.
-4. In Chrome on Android, menu > **Install app** to put it on the home screen.
-5. Start any song once in the official Spotify app so it shows up as a device, then pick it with the device button in Spindle.
+- Python 3.10+
+- A Spotify account and a SpotAPI cookie/session dump for private account features
+- Use only on a trusted machine/network. The backend can control the configured Spotify account.
 
-## Notes
+## Install and run
 
-- Playback control needs **Spotify Premium** (Spotify's rule for the Web API player endpoints).
-- Apps in Spotify development mode are limited to you plus users you add in the dashboard. Some endpoints can change or be restricted; errors show on screen.
-- **Marketplace:** results are GitHub repos tagged `spicetify-extensions` or `spicetify-themes`. GitHub's unauthenticated limit is 60 requests/hour per IP; results are cached for 10 minutes.
-- **Extensions** run in sandboxed iframes with a small `Spicetify` shim: `Player` (state, events, controls), `showNotification`, `LocalStorage`, `CosmosAsync` (api.spotify.com/v1 only), `Keyboard`, `Topbar.Button`, `Menu.Item`, `URI`, `addToQueue`.
-  Extensions that depend on the desktop client's internals (React components, `Platform` APIs, `sp://` endpoints) will log an error and not work. The log is on Marketplace > Installed.
-- **Themes:** only `color.ini` schemes are applied. Spicetify theme CSS targets the desktop app's markup and is not used.
-- Extensions can still use the network and see what you play, so install only code you trust.
-- Ad-blocking extensions are not supported (and are unnecessary with Premium).
+```bash
+python -m venv .venv
+# Windows: .venv\\Scripts\\activate
+# macOS/Linux:
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
+Set `SPOTIFY_COOKIE_DUMP` to the JSON cookie/session dump for your own Spotify session, following SpotAPI's official README section **Import Cookies**. Keep this value private; do not commit it to Git or paste it into issues. For example, set it in your shell before starting the server:
 
-## SpotAPI integration (backend required)
+```bash
+# macOS/Linux; use a protected environment and your own dump
+export SPOTIFY_COOKIE_DUMP='{"identifier":"YOUR_ACCOUNT_IDENTIFIER","cookies":{"sp_dc":"YOUR_PRIVATE_COOKIE"}}'
+python -m uvicorn server:app --host 127.0.0.1 --port 8000
+```
 
-Spindle is a browser-based PWA, while SpotAPI is a Python library. The SpotAPI-powered
-catalog search therefore runs in a small same-origin Python backend. The search UI now
-uses `/api/search`; run Spindle through this backend rather than opening `index.html`
-directly or deploying it as a static-only GitHub Pages site.
+The example shows the shape only; use the complete valid cookie dump exported/prepared for your own session as described by SpotAPI. A cookie dump containing only one cookie may not be sufficient. On Windows PowerShell, set the variable with `$env:SPOTIFY_COOKIE_DUMP='...'` before running Uvicorn.
 
-### Run locally
+Open <http://127.0.0.1:8000>. Public song search can work without a private session; library and playback features require a valid session. The Settings page can test whether the backend session is configured.
 
-1. Install Python 3.10+.
-2. From this folder, run `python -m pip install -r requirements.txt`.
-3. Run `python -m uvicorn server:app --host 127.0.0.1 --port 8000`.
-4. Open `http://127.0.0.1:8000`.
+## API migration status
 
-The adapter currently replaces **catalog track search** with SpotAPI. Spotify OAuth,
-playback/device controls, user playlists and liked songs still use Spindle's existing
-official Spotify Web API integration; those features need a separate server-side
-SpotAPI mapping and authentication/session design before they can be safely migrated.
-SpotAPI uses unofficial/private Spotify endpoints in parts, which may change or be
-restricted. Do not expose an authenticated backend publicly without adding appropriate
-session isolation, CSRF protections, rate limiting, and secret management.
+- Catalog song search: SpotAPI `Song.query_songs`
+- Public playlist lookup: SpotAPI `PublicPlaylist`
+- Library and liked tracks: SpotAPI `PrivatePlaylist`
+- Playback state/device listing: SpotAPI `PlayerStatus`
+- Playback commands: SpotAPI `Player`
+- OAuth tokens, `api.spotify.com/v1` requests, and Spotify Web Playback SDK: removed from the main application path
+
+SpotAPI is based on Spotify's private/web endpoints and these can change or fail. Not every legacy extension API endpoint has an equivalent SpotAPI method. Unsupported extension calls will return an explicit error rather than silently call the old API. Shuffle and some context/device operations are not currently exposed by the SpotAPI methods used here. Please validate account and playback behavior with your own session before relying on this build.
+
+## Security
+
+The backend is bound to `127.0.0.1` by default. Do not expose it on a public interface without adding authentication, TLS, CSRF protection, and a deliberate session-management design. Treat Spotify cookie dumps as passwords. Do not commit them, serve them to the browser, or share them.
+
+## Marketplace
+
+Marketplace metadata is still retrieved from GitHub. Extensions are third-party code; install only extensions you trust. Extensions that call legacy Spotify Web API endpoints may need their own migration to the SpotAPI operations supported by this backend.
