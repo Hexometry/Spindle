@@ -1,5 +1,7 @@
 import os
 
+import requests
+
 from flask import Flask, abort, jsonify, redirect, request, send_from_directory, session
 from spotipy import Spotify, SpotifyException
 from spotipy.cache_handler import FlaskSessionCacheHandler
@@ -15,6 +17,8 @@ SCOPES = " ".join([
     "user-read-private",          # required for Web Playback SDK
     "user-read-playback-state",
     "user-modify-playback-state",
+    "user-library-read",          # lets Spicetify-style extensions read your library
+    "playlist-read-private",
 ])
 
 
@@ -42,7 +46,7 @@ def valid_token():
 # ---------- pages & auth (Spotipy) ----------
 
 # Only these files are served (so app.py etc. can never be downloaded)
-PUBLIC_FILES = {"index.html", "manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png"}
+PUBLIC_FILES = {"index.html", "manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "spicetify-shim.js"}
 
 
 def _file(name):
@@ -115,6 +119,101 @@ def play():
     return "", 204
 
 
+# ---------- account, devices, state, transport, API proxy ----------
+
+def _spotify_call(fn):
+    if not valid_token():
+        return jsonify(error="not_logged_in"), 401
+    try:
+        return fn(Spotify(auth_manager=auth_manager()))
+    except SpotifyException as e:
+        return jsonify(error=e.msg), e.http_status
+
+
+@app.get("/me")
+def me():
+    if not valid_token():
+        return jsonify(logged_in=False)
+
+    def go(sp):
+        u = sp.current_user()
+        return jsonify(logged_in=True, name=u.get("display_name") or u["id"], product=u.get("product"))
+    return _spotify_call(go)
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+
+@app.get("/devices")
+def devices():
+    return _spotify_call(lambda sp: jsonify(devices=sp.devices().get("devices", [])))
+
+
+@app.get("/state")
+def state():
+    def go(sp):
+        pb = sp.current_playback()
+        if not pb or not pb.get("item"):
+            return jsonify(active=False)
+        t = pb["item"]
+        album = t.get("album") or {}
+        return jsonify(
+            active=True,
+            is_playing=pb["is_playing"],
+            progress_ms=pb.get("progress_ms") or 0,
+            device_id=(pb.get("device") or {}).get("id"),
+            item={
+                "uri": t["uri"],
+                "name": t["name"],
+                "artists": [{"name": a["name"], "uri": a["uri"]} for a in t.get("artists", [])],
+                "album": {"name": album.get("name", ""), "uri": album.get("uri", "")},
+                "duration_ms": t.get("duration_ms", 0),
+                "image": (album.get("images") or [{}])[0].get("url"),
+            },
+        )
+    return _spotify_call(go)
+
+
+@app.post("/transport")
+def transport():
+    b = request.get_json(force=True)
+    action, dev = b.get("action"), b.get("device_id")
+
+    def go(sp):
+        if action == "pause":
+            sp.pause_playback(device_id=dev)
+        elif action == "resume":
+            sp.start_playback(device_id=dev)
+        elif action == "next":
+            sp.next_track(device_id=dev)
+        elif action == "prev":
+            sp.previous_track(device_id=dev)
+        elif action == "seek":
+            sp.seek_track(int(b["position_ms"]), device_id=dev)
+        elif action == "transfer":
+            sp.transfer_playback(dev, force_play=True)
+        else:
+            return jsonify(error="bad action"), 400
+        return "", 204
+    return _spotify_call(go)
+
+
+@app.get("/api")
+def api_proxy():
+    """Read-only passthrough to the Spotify Web API (used by Spicetify's CosmosAsync.get)."""
+    path = request.args.get("path", "")
+    t = valid_token()
+    if not t:
+        return jsonify(error="not_logged_in"), 401
+    if not path.startswith("/v1/") or ".." in path or "//" in path:
+        return jsonify(error="unsupported path"), 400
+    r = requests.get("https://api.spotify.com" + path, headers={"Authorization": f"Bearer {t}"}, timeout=10)
+    return r.content, r.status_code, {"Content-Type": r.headers.get("Content-Type", "application/json")}
+
+
 # ---------- search by name ----------
 # Two backends, tried in order. Both return [{"name","artists","uri"}].
 #  - spotipy: official API, app-level login (no user login needed). Needs
@@ -131,7 +230,14 @@ def _search_spotipy(query):
     sp = Spotify(auth_manager=SpotifyClientCredentials(client_id=cid, client_secret=secret))
     items = sp.search(q=query, type="track", limit=10)["tracks"]["items"]
     return [
-        {"name": t["name"], "artists": ", ".join(a["name"] for a in t["artists"]), "uri": t["uri"]}
+        {
+            "name": t["name"],
+            "artists": ", ".join(a["name"] for a in t["artists"]),
+            "uri": t["uri"],
+            "album": t["album"]["name"],
+            "duration_ms": t["duration_ms"],
+            "image": (t["album"]["images"] or [{}])[-1].get("url"),
+        }
         for t in items
     ]
 

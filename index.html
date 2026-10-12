@@ -10,138 +10,296 @@
 <style>
   :root { --bg:#14110f; --panel:#201b18; --line:#37302b; --text:#f1ebe4; --dim:#a39a91; --accent:#e8b04a; }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
-    font:16px/1.4 system-ui, sans-serif; }
-  body { display:flex; flex-direction:column;
-    padding: env(safe-area-inset-top) 0 0; }
-  header { padding:.9rem 1rem .5rem; font-size:1.35rem; font-weight:700; letter-spacing:.02em; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:16px/1.4 system-ui, sans-serif; }
+  body { display:flex; flex-direction:column; padding-top: env(safe-area-inset-top); }
+  header { display:flex; align-items:center; gap:.5rem; padding:.9rem 1rem .5rem; }
+  header h1 { flex:1; margin:0; font-size:1.35rem; letter-spacing:.02em; }
+  #tb { display:flex; gap:.4rem; }
   form { display:flex; gap:.5rem; padding:0 1rem .75rem; }
-  input { flex:1; min-width:0; padding:.7rem .85rem; font:inherit; color:var(--text);
+  input[type=search], input[type=url] { flex:1; min-width:0; padding:.7rem .85rem; font:inherit; color:var(--text);
     background:var(--panel); border:1px solid var(--line); border-radius:.6rem; }
-  button { padding:.7rem 1rem; font:inherit; font-weight:600; color:#14110f;
-    background:var(--accent); border:0; border-radius:.6rem; }
-  button:focus-visible, input:focus-visible, li:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  button, select { font:inherit; border-radius:.6rem; }
+  button.go, .xbtn, #pp { padding:.6rem .9rem; font-weight:600; color:#14110f; background:var(--accent); border:0; }
+  button.ghost { padding:.45rem .7rem; color:var(--text); background:var(--panel); border:1px solid var(--line); }
+  .xbtn { padding:.4rem .6rem; } .xbtn svg { width:1.1em; height:1.1em; fill:currentColor; }
+  button:focus-visible, input:focus-visible, select:focus-visible, li:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   #msg { padding:0 1rem; color:var(--dim); min-height:1.4em; font-size:.9rem; }
   #results { flex:1; overflow-y:auto; margin:0; padding:.25rem 0 1rem; list-style:none; }
   #results li { padding:.7rem 1rem; border-bottom:1px solid var(--line); }
   #results li[aria-current="true"] { background:var(--panel); border-left:3px solid var(--accent); }
-  #results .t { font-weight:600; }
-  #results .a { color:var(--dim); font-size:.9rem; }
-  footer { background:var(--panel); border-top:1px solid var(--line);
-    padding:.6rem .75rem calc(.6rem + env(safe-area-inset-bottom)); }
-  #now { color:var(--dim); font-size:.85rem; padding:0 .25rem .4rem; white-space:nowrap;
-    overflow:hidden; text-overflow:ellipsis; }
-  #player { height:152px; }
-  @media (prefers-reduced-motion: no-preference) { button:active { transform:scale(.97); } }
+  #results .t { font-weight:600; } #results .a { color:var(--dim); font-size:.9rem; }
+  footer { background:var(--panel); border-top:1px solid var(--line); padding:.6rem .75rem calc(.6rem + env(safe-area-inset-bottom)); }
+  #now { padding:0 .25rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #mode { color:var(--dim); font-size:.8rem; padding:0 .25rem .4rem; }
+  #bar[hidden], #player[hidden] { display:none; }
+  #seek { width:100%; accent-color:var(--accent); }
+  .row { display:flex; align-items:center; gap:.5rem; margin-top:.25rem; flex-wrap:wrap; }
+  .row button:not(.xbtn):not(#pp) { padding:.5rem .8rem; background:var(--bg); color:var(--text); border:1px solid var(--line); }
+  #dev { flex:1; min-width:0; padding:.5rem; color:var(--text); background:var(--bg); border:1px solid var(--line); }
+  #player { height:152px; margin-top:.25rem; }
+  dialog { width:min(92vw,32rem); max-height:85vh; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:.8rem; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog h2 { margin:.2rem 0 .5rem; font-size:1.1rem; } dialog h3 { margin:1rem 0 .3rem; font-size:.95rem; color:var(--dim); }
+  dialog p, dialog small { color:var(--dim); font-size:.85rem; }
+  dialog li { display:flex; gap:.5rem; align-items:center; justify-content:space-between; padding:.35rem 0; word-break:break-all; }
+  dialog ul { list-style:none; margin:0; padding:0; }
+  .toast { position:fixed; left:1rem; right:1rem; bottom:calc(14rem + env(safe-area-inset-bottom)); z-index:99; padding:.7rem 1rem;
+    background:var(--text); color:var(--bg); border-radius:.6rem; text-align:center; }
+  .toast.err { background:#e0705a; }
 </style>
 </head>
 <body>
-  <header>Spindle</header>
+  <header>
+    <h1>Spindle</h1>
+    <div id="tb"></div>
+    <button class="ghost" id="extBtn">Extensions</button>
+    <button class="ghost" id="acct">Log in</button>
+  </header>
   <form id="f">
     <input id="q" type="search" placeholder="Search songs or artists" aria-label="Search songs or artists" autocomplete="off">
-    <button>Go</button>
+    <button class="go">Go</button>
   </form>
   <div id="msg" role="status"></div>
   <ul id="results"></ul>
   <footer>
     <div id="now">Nothing playing</div>
-    <div id="player"></div>
+    <div id="mode">Starting…</div>
+    <div id="bar" hidden>
+      <input id="seek" type="range" min="0" max="1" value="0" step="1" aria-label="Seek">
+      <div class="row">
+        <button id="prev" aria-label="Previous">⏮</button>
+        <button id="pp" aria-label="Play or pause">▶</button>
+        <button id="next" aria-label="Next">⏭</button>
+        <span id="pb" style="display:flex;gap:.4rem"></span>
+      </div>
+      <div class="row" id="devRow" hidden>
+        <select id="dev" aria-label="Playback device"></select>
+        <button id="devRefresh">Refresh</button>
+      </div>
+    </div>
+    <div id="player" hidden></div>
   </footer>
 
-<script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
+  <dialog id="extDlg">
+    <h2>Extensions</h2>
+    <p>Spicetify extensions run with full access to this page, including your Spotify session. Only add ones you trust.</p>
+    <form id="extForm" style="padding:0;margin:.5rem 0">
+      <input id="extUrl" type="url" placeholder="Link to an extension .js file" aria-label="Extension URL" required>
+      <button class="go">Add</button>
+    </form>
+    <div id="extMsg" role="status"><small></small></div>
+    <h3>Installed</h3><ul id="extList"></ul>
+    <h3>Menu items</h3><ul id="menuList"></ul>
+    <h3>Actions for the current track</h3><ul id="ctxList"></ul>
+    <div class="row"><button class="ghost" id="extClose">Close</button></div>
+  </dialog>
+
 <script>
+/* ===== Core: one player interface over three backends (sdk | remote | embed) ===== */
 const $ = id => document.getElementById(id);
 const say = t => { $("msg").textContent = t || ""; };
-
-/* ---------- Plugin API ----------
-   Spindle.use(api => { api.on("state", s => ...); api.on("load", item => ...); })
-   api: on, loadUri, toggle, pause, seek, current()                           */
-const Spindle = (() => {
-  const handlers = { state: [], load: [] };
-  let ctrl = null, cur = null;
-  const emit = (e, d) => handlers[e].forEach(fn => { try { fn(d); } catch (err) { console.error("plugin error", err); } });
-  const api = {
-    on: (e, fn) => handlers[e] && handlers[e].push(fn),
-    loadUri(uri, item) {
-      cur = item || { name: uri, artists: "", uri };
-      ctrl.loadUri(uri);
-      ctrl.play();
-      $("now").textContent = cur.artists ? `${cur.name} — ${cur.artists}` : cur.name;
-      emit("load", cur);
-    },
-    toggle: () => ctrl && ctrl.togglePlay(),
-    pause: () => ctrl && ctrl.pause(),
-    seek: sec => ctrl && ctrl.seek(sec),
-    current: () => cur,
-  };
-  return {
-    api,
-    use: fn => fn(api),
-    _attach(c) { ctrl = c; c.addListener("playback_update", e => emit("state", e.data)); },
-  };
-})();
-
-/* ---------- Example plugin: show progress in the tab title ---------- */
-Spindle.use(api => {
-  api.on("state", s => {
-    const m = Math.floor(s.position / 60000), sec = String(Math.floor(s.position / 1000) % 60).padStart(2, "0");
-    document.title = s.isPaused ? "Spindle" : `▶ ${m}:${sec} Spindle`;
-  });
+const norm = it => ({
+  uri: it.uri, name: it.name || it.uri,
+  artists: Array.isArray(it.artists) ? it.artists : (it.artists ? it.artists.split(", ").map(name => ({ name })) : []),
+  album: typeof it.album === "string" ? { name: it.album } : (it.album || {}),
+  duration_ms: it.duration_ms || 0, image: it.image || null,
 });
-
-/* ---------- Embed player ---------- */
-let queued = null;
-window.onSpotifyIframeApiReady = IFrameAPI => {
-  IFrameAPI.createController($("player"), { width: "100%", height: 152 }, ctrl => {
-    Spindle._attach(ctrl);
-    if (queued) { Spindle.api.loadUri(queued.uri, queued); queued = null; }
-  });
+window.Spindle = {
+  mode: null, impl: null, deviceId: null, menuItems: new Set(), ctxItems: new Set(), ui: null,
+  S: { item: null, playing: false, pos: 0, dur: 0, t: Date.now() },
+  H: { songchange: [], playpause: [], progress: [] },
+  on(e, f) { (this.H[e] = this.H[e] || []).push(f); },
+  off(e, f) { this.H[e] = (this.H[e] || []).filter(x => x !== f); },
+  emit(e) { (this.H[e] || []).forEach(f => { try { f({ data: this.data() }); } catch (x) { console.error("listener error", x); } }); },
+  position() { return this.S.playing ? Math.min(this.S.pos + Date.now() - this.S.t, this.S.dur || Infinity) : this.S.pos; },
+  data() {
+    const it = this.S.item, S = this.S;
+    const item = it && { uri: it.uri, name: it.name, type: "track",
+      album: { name: it.album.name || "", uri: it.album.uri || "", images: it.image ? [{ url: it.image }] : [] },
+      artists: it.artists.map(a => ({ name: a.name, uri: a.uri || "" })),
+      duration_ms: it.duration_ms || S.dur, duration: { milliseconds: it.duration_ms || S.dur },
+      metadata: { title: it.name, artist_name: it.artists.map(a => a.name).join(", "), album_title: it.album.name || "", image_url: it.image || "" } };
+    return { item, track: item, is_paused: !S.playing, position_as_of_timestamp: S.pos, timestamp: S.t, duration: S.dur };
+  },
+  set(p) {
+    const old = this.S, cur = this.position();
+    this.S = { ...old, ...p, pos: p.pos !== undefined ? p.pos : cur, t: Date.now() };
+    if (p.item && (!old.item || p.item.uri !== old.item.uri)) this.emit("songchange");
+    if (p.playing !== undefined && p.playing !== old.playing) this.emit("playpause");
+    this.paint();
+  },
+  async play(item) {
+    if (!this.impl) { say("Player is still starting…"); return; }
+    const it = norm(item);
+    this.set({ item: it, pos: 0, dur: it.duration_ms || this.S.dur, playing: true });
+    return this.impl.play(it);
+  },
+  toggle() { return this.impl && this.impl.toggle(); },
+  next() { return this.impl && this.impl.next(); },
+  prev() { return this.impl && this.impl.prev(); },
+  seek(ms) { this.set({ pos: ms }); return this.impl && this.impl.seek(ms); },
+  paint() {
+    const S = this.S, it = S.item;
+    $("now").textContent = it ? `${it.name} — ${it.artists.map(a => a.name).join(", ")}` : "Nothing playing";
+    $("pp").textContent = S.playing ? "⏸" : "▶";
+    if (!this.dragging) { $("seek").max = S.dur || 1; $("seek").value = this.position(); }
+  },
 };
-function play(item) {
-  try { Spindle.api.loadUri(item.uri, item); }
-  catch { queued = item; say("Player is still loading — it will start in a moment."); }
+setInterval(() => { const C = window.Spindle; if (C.S.playing) { C.emit("progress"); C.paint(); } }, 1000);
+</script>
+<script src="/spicetify-shim.js"></script>
+<script>
+/* ===== Backends ===== */
+const C = window.Spindle;
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const loadScript = src => new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.async = true; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+const token = async () => { const r = await fetch("/token"); return r.ok ? (await r.json()).token : null; };
+const playBody = it => /^spotify:(track|episode):/.test(it.uri) ? { uris: [it.uri] } : { context_uri: it.uri };
+const setMode = (m, label) => {
+  C.mode = m; $("mode").textContent = label;
+  $("bar").hidden = m === "embed"; $("player").hidden = m !== "embed"; $("devRow").hidden = m !== "remote";
+};
+async function sendPlay(it) {
+  const r = await post("/play", { device_id: C.deviceId, ...playBody(it) });
+  if (!r.ok) say(r.status === 404 ? "No active Spotify device. Open the Spotify app, then press Refresh." : "Couldn't start playback (" + r.status + ").");
 }
 
-/* ---------- Search / paste a link ---------- */
-function linkToUri(s) {
-  const m = s.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist|episode|show)\/([A-Za-z0-9]+)/);
-  if (m) return `spotify:${m[1]}:${m[2]}`;
-  return /^spotify:(track|album|playlist|episode|show):[A-Za-z0-9]+$/.test(s) ? s : null;
+function startEmbed(note) {
+  return new Promise(res => {
+    window.onSpotifyIframeApiReady = I => I.createController($("player"), { width: "100%", height: 152 }, ctrl => {
+      ctrl.addListener("playback_update", e => C.set({ playing: !e.data.isPaused, pos: e.data.position, dur: e.data.duration }));
+      C.impl = { play: it => { ctrl.loadUri(it.uri); ctrl.play(); }, toggle: () => ctrl.togglePlay(), next() {}, prev() {}, seek: ms => ctrl.seek(Math.floor(ms / 1000)) };
+      setMode("embed", note || "Embedded player"); res();
+    });
+    loadScript("https://open.spotify.com/embed/iframe-api/v1").catch(() => say("Couldn't load Spotify's embed player."));
+  });
 }
+
+function trySdk(ms) {
+  return new Promise(res => {
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    setTimeout(() => fin(false), ms);
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      const p = new Spotify.Player({ name: "Spindle", volume: 0.7, getOAuthToken: async cb => cb(await token()) });
+      p.addListener("ready", ({ device_id }) => {
+        if (done) return;
+        C.deviceId = device_id;
+        C.impl = { play: async it => { await p.activateElement(); await sendPlay(it); }, toggle: () => p.togglePlay(), next: () => p.nextTrack(), prev: () => p.previousTrack(), seek: ms => p.seek(ms) };
+        setMode("sdk", "Playing in this browser"); fin(true);
+      });
+      ["initialization_error", "authentication_error", "account_error"].forEach(e => p.addListener(e, ({ message }) => { console.warn(e, message); fin(false); }));
+      p.addListener("player_state_changed", st => {
+        if (!st) return;
+        const t = st.track_window.current_track;
+        C.set({ playing: !st.paused, pos: st.position, dur: st.duration, item: norm({ uri: t.uri, name: t.name, artists: t.artists, album: t.album, duration_ms: t.duration_ms, image: (t.album.images[0] || {}).url }) });
+      });
+      p.connect();
+    };
+    loadScript("https://sdk.scdn.co/spotify-player.js").catch(() => fin(false));
+  });
+}
+
+async function refreshDevices() {
+  const r = await fetch("/devices"); if (!r.ok) return;
+  const list = (await r.json()).devices, sel = $("dev");
+  sel.innerHTML = "";
+  list.forEach(d => { const o = document.createElement("option"); o.value = d.id; o.textContent = d.name + (d.is_active ? " (active)" : ""); o.selected = d.is_active; sel.appendChild(o); });
+  if (!list.length) { sel.innerHTML = "<option value=''>No devices — open the Spotify app</option>"; C.deviceId = null; }
+  else C.deviceId = sel.value;
+}
+async function pollState() {
+  const r = await fetch("/state"); if (!r.ok) return;
+  const s = await r.json(); if (!s.active) return;
+  C.set({ item: norm(s.item), playing: s.is_playing, pos: s.progress_ms, dur: s.item.duration_ms });
+}
+async function startRemote() {
+  const t = (action, extra) => post("/transport", { action, device_id: C.deviceId, ...extra }).then(() => setTimeout(pollState, 700));
+  C.impl = { play: async it => { await sendPlay(it); setTimeout(pollState, 1200); }, toggle: () => t(C.S.playing ? "pause" : "resume"), next: () => t("next"), prev: () => t("prev"), seek: ms => t("seek", { position_ms: ms }) };
+  setMode("remote", "Controlling your Spotify app");
+  $("dev").onchange = () => { C.deviceId = $("dev").value; post("/transport", { action: "transfer", device_id: C.deviceId }); };
+  $("devRefresh").onclick = refreshDevices;
+  await refreshDevices(); pollState(); setInterval(pollState, 3000);
+}
+
+/* ===== Account + boot ===== */
+async function boot() {
+  let me = { logged_in: false };
+  try { me = await (await fetch("/me")).json(); } catch {}
+  $("acct").textContent = me.logged_in ? `${me.name} · Log out` : "Log in";
+  $("acct").onclick = () => { location.href = me.logged_in ? "/logout" : "/login"; };
+  if (!me.logged_in) return startEmbed("Embedded player — log in with Spotify Premium for full songs");
+  if (me.product === "premium") { if (!(await trySdk(6000))) await startRemote(); return; }
+  return startEmbed("Free account — full songs need Premium, or being logged in to Spotify in this browser");
+}
+
+/* ===== Controls ===== */
+$("pp").onclick = () => C.toggle(); $("next").onclick = () => C.next(); $("prev").onclick = () => C.prev();
+$("seek").addEventListener("pointerdown", () => { C.dragging = true; });
+$("seek").addEventListener("change", e => { C.dragging = false; C.seek(+e.target.value); });
+
+/* ===== Search ===== */
+const linkToUri = s => { const m = s.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist|episode|show)\/([A-Za-z0-9]+)/); return m ? `spotify:${m[1]}:${m[2]}` : (/^spotify:(track|album|playlist|episode|show):[A-Za-z0-9]+$/.test(s) ? s : null); };
 function render(items) {
   const ul = $("results"); ul.innerHTML = "";
   items.forEach(it => {
-    const li = document.createElement("li");
-    li.tabIndex = 0;
-    li.innerHTML = `<div class="t"></div><div class="a"></div>`;
-    li.children[0].textContent = it.name;
-    li.children[1].textContent = it.artists || "";
-    const go = () => {
-      ul.querySelectorAll("li").forEach(x => x.removeAttribute("aria-current"));
-      li.setAttribute("aria-current", "true");
-      play(it);
-    };
-    li.onclick = go;
-    li.onkeydown = e => { if (e.key === "Enter") go(); };
+    const li = document.createElement("li"); li.tabIndex = 0;
+    li.innerHTML = '<div class="t"></div><div class="a"></div>';
+    li.children[0].textContent = it.name; li.children[1].textContent = Array.isArray(it.artists) ? it.artists.map(a => a.name).join(", ") : (it.artists || "");
+    const go = () => { ul.querySelectorAll("li").forEach(x => x.removeAttribute("aria-current")); li.setAttribute("aria-current", "true"); C.play(it); };
+    li.onclick = go; li.onkeydown = e => { if (e.key === "Enter") go(); };
     ul.appendChild(li);
   });
 }
 $("f").onsubmit = async e => {
   e.preventDefault();
-  const q = $("q").value.trim();
-  if (!q) return;
+  const q = $("q").value.trim(); if (!q) return;
   const uri = linkToUri(q);
-  if (uri) { say(""); render([{ name: uri, artists: "From link", uri }]); play({ name: uri, artists: "From link", uri }); return; }
+  if (uri) { say(""); const it = { name: uri, artists: "From link", uri }; render([it]); C.play(it); return; }
   say("Searching…");
   try {
-    const r = await fetch("/search?q=" + encodeURIComponent(q));
-    const d = await r.json();
+    const r = await fetch("/search?q=" + encodeURIComponent(q)), d = await r.json();
     if (!r.ok) { say(d.error || "Search failed."); return; }
-    say(d.results.length ? "" : "No results.");
-    render(d.results);
+    say(d.results.length ? "" : "No results."); render(d.results);
   } catch { say("Couldn't reach the server."); }
 };
 
+/* ===== Extensions (Spicetify-style) ===== */
+const Ext = {
+  key: "spindle:extensions",
+  list() { try { return JSON.parse(localStorage.getItem(this.key) || "[]"); } catch { return []; } },
+  save(l) { try { localStorage.setItem(this.key, JSON.stringify(l)); } catch {} },
+  raw: u => u.replace(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/, "https://raw.githubusercontent.com/$1/$2/$3"),
+  async run(url) {
+    const r = await fetch(this.raw(url)); if (!r.ok) throw new Error("HTTP " + r.status);
+    const s = document.createElement("script"); s.textContent = (await r.text()) + "\n//# sourceURL=" + url; document.head.appendChild(s);
+  },
+  async loadAll() { for (const e of this.list()) { try { await this.run(e.url); } catch (err) { console.warn("extension failed", e.url, err); say("An extension failed to load: " + e.url); } } },
+};
+const li = (text, btnLabel, fn) => { const el = document.createElement("li"); const sp = document.createElement("span"); sp.textContent = text; el.appendChild(sp);
+  if (btnLabel) { const b = document.createElement("button"); b.className = "ghost"; b.textContent = btnLabel; b.onclick = fn; el.appendChild(b); } return el; };
+function renderPanel() {
+  const el = $("extList"); el.innerHTML = "";
+  const l = Ext.list(); if (!l.length) el.appendChild(li("None yet"));
+  l.forEach(e => el.appendChild(li(e.url, "Remove", () => { Ext.save(Ext.list().filter(x => x.url !== e.url)); $("extMsg").firstChild.textContent = "Removed. Reload the page to fully unload it."; renderPanel(); })));
+  const m = $("menuList"); m.innerHTML = ""; if (!C.menuItems.size) m.appendChild(li("None"));
+  C.menuItems.forEach(i => m.appendChild(li(i.name + (i.isEnabled !== undefined ? (i.isEnabled ? " (on)" : " (off)") : ""), "Run", () => i.onClick && i.onClick(i))));
+  const c = $("ctxList"); c.innerHTML = ""; const uri = C.S.item && C.S.item.uri;
+  const usable = uri ? [...C.ctxItems].filter(i => { try { return i.shouldAdd([uri]); } catch { return false; } }) : [];
+  if (!usable.length) c.appendChild(li(uri ? "None for this track" : "Play something first"));
+  usable.forEach(i => c.appendChild(li(i.name, "Run", () => i.onClick([uri]))));
+}
+C.ui = { refreshPanel: () => { if ($("extDlg").open) renderPanel(); } };
+$("extBtn").onclick = () => { renderPanel(); $("extDlg").showModal(); };
+$("extClose").onclick = () => $("extDlg").close();
+$("extForm").onsubmit = async e => {
+  e.preventDefault(); const url = $("extUrl").value.trim(), msg = $("extMsg").firstChild;
+  msg.textContent = "Loading…";
+  try { await Ext.run(url); const l = Ext.list(); if (!l.some(x => x.url === url)) { l.push({ url }); Ext.save(l); } msg.textContent = "Added."; $("extUrl").value = ""; }
+  catch (err) { msg.textContent = "Couldn't load it (" + err.message + "). The host must allow cross-origin requests; raw.githubusercontent.com does."; }
+  renderPanel();
+};
+
+boot().then(() => Ext.loadAll());
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 </script>
 </body>
